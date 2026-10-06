@@ -2,40 +2,51 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections import Counter
 import re
+import html
 
 # -----------------------------------
-# POP CULTURE RADAR - VERSION 0.1
+# POP CULTURE RADAR - VERSION 0.2
+# Entertainment News + Google Trends
 # -----------------------------------
 
-FEEDS = [
+NEWS_FEEDS = [
     ("Variety", "https://variety.com/feed/"),
     ("Deadline", "https://deadline.com/feed/"),
     ("Hollywood Reporter", "https://www.hollywoodreporter.com/feed/"),
     ("Rolling Stone", "https://www.rollingstone.com/tv-movies/feed/"),
 ]
 
+# Google Trends RSS
+# GB = United Kingdom. We can add US and other countries later.
+GOOGLE_TRENDS_URL = (
+    "https://trends.google.com/trending/rss?geo=GB"
+)
+
 IGNORE_WORDS = {
     "the", "and", "for", "with", "that", "this", "from",
     "has", "have", "will", "about", "after", "into",
     "their", "they", "its", "are", "was", "who", "why",
     "how", "new", "says", "over", "more", "his", "her",
-    "film", "movie", "tv"
+    "film", "movie", "movies", "show", "shows", "series",
+    "season", "episode", "star", "stars"
 }
 
 
-def get_feed(source, url):
-    """Download headlines from an RSS feed."""
-
+def download_xml(url):
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "Mozilla/5.0"}
     )
 
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            xml_data = response.read()
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return response.read()
 
-        root = ET.fromstring(xml_data)
+
+def get_news_feed(source, url):
+    """Download entertainment headlines."""
+
+    try:
+        root = ET.fromstring(download_xml(url))
 
         stories = []
 
@@ -46,7 +57,7 @@ def get_feed(source, url):
             if title:
                 stories.append({
                     "source": source,
-                    "title": title.strip(),
+                    "title": html.unescape(title.strip()),
                     "link": link or ""
                 })
 
@@ -57,9 +68,32 @@ def get_feed(source, url):
         return []
 
 
-def important_words(text):
-    """Extract useful words from a headline."""
+def get_google_trends():
+    """Get Google's current UK trending searches."""
 
+    try:
+        root = ET.fromstring(download_xml(GOOGLE_TRENDS_URL))
+
+        trends = []
+
+        for item in root.findall(".//item"):
+            title = item.findtext("title")
+            link = item.findtext("link")
+
+            if title:
+                trends.append({
+                    "title": html.unescape(title.strip()),
+                    "link": link or ""
+                })
+
+        return trends
+
+    except Exception as error:
+        print(f"Could not read Google Trends: {error}")
+        return []
+
+
+def important_words(text):
     words = re.findall(r"[A-Za-z0-9']+", text.lower())
 
     return [
@@ -68,31 +102,69 @@ def important_words(text):
     ]
 
 
+def trend_matches_story(trend_title, story_title):
+    """
+    Check whether a Google trend appears to relate
+    to an entertainment headline.
+    """
+
+    trend_words = set(important_words(trend_title))
+    story_words = set(important_words(story_title))
+
+    if not trend_words or not story_words:
+        return False
+
+    shared = trend_words.intersection(story_words)
+
+    return len(shared) >= 1
+
+
 print()
-print("=" * 60)
-print("🔥 POP CULTURE RADAR")
-print("=" * 60)
+print("=" * 65)
+print("🔥 POP CULTURE RADAR 0.2")
+print("Entertainment News + Google Trends")
+print("=" * 65)
 print()
+
+
+# -----------------------------------
+# COLLECT ENTERTAINMENT NEWS
+# -----------------------------------
 
 all_stories = []
 
-for source, url in FEEDS:
+for source, url in NEWS_FEEDS:
 
     print(f"Scanning {source}...")
 
-    stories = get_feed(source, url)
+    stories = get_news_feed(source, url)
 
     print(f"  Found {len(stories)} stories")
 
     all_stories.extend(stories)
 
 
+# -----------------------------------
+# COLLECT GOOGLE TRENDS
+# -----------------------------------
+
 print()
-print(f"Total stories scanned: {len(all_stories)}")
+print("Scanning Google Trends UK...")
+
+google_trends = get_google_trends()
+
+print(f"  Found {len(google_trends)} trending searches")
+
+
+print()
+print(f"Entertainment stories scanned: {len(all_stories)}")
+print(f"Google trends scanned: {len(google_trends)}")
 print()
 
 
-# Count words appearing across headlines
+# -----------------------------------
+# FIND COMMON WORDS IN NEWS
+# -----------------------------------
 
 word_counts = Counter()
 
@@ -101,7 +173,9 @@ for story in all_stories:
     word_counts.update(words)
 
 
-# Give each story a basic trend score
+# -----------------------------------
+# SCORE STORIES
+# -----------------------------------
 
 ranked_stories = []
 
@@ -109,11 +183,32 @@ for story in all_stories:
 
     words = important_words(story["title"])
 
-    score = sum(word_counts[word] for word in set(words))
+    news_score = sum(
+        word_counts[word]
+        for word in set(words)
+    )
+
+    matching_trends = []
+
+    for trend in google_trends:
+
+        if trend_matches_story(
+            trend["title"],
+            story["title"]
+        ):
+            matching_trends.append(trend["title"])
+
+    # Google confirmation gives a large boost.
+    google_boost = len(matching_trends) * 20
+
+    total_score = news_score + google_boost
 
     ranked_stories.append({
         **story,
-        "score": score
+        "news_score": news_score,
+        "google_boost": google_boost,
+        "matching_trends": matching_trends,
+        "score": total_score
     })
 
 
@@ -123,11 +218,13 @@ ranked_stories.sort(
 )
 
 
-# Show the top 20
+# -----------------------------------
+# DISPLAY RESULTS
+# -----------------------------------
 
-print("=" * 60)
+print("=" * 65)
 print("📈 TODAY'S POP CULTURE RADAR")
-print("=" * 60)
+print("=" * 65)
 
 seen_titles = set()
 position = 1
@@ -143,7 +240,17 @@ for story in ranked_stories:
 
     print()
     print(f"{position}. {story['title']}")
-    print(f"   Trend score: {story['score']}")
+    print(f"   RADAR SCORE: {story['score']}")
+    print(f"   News signal: {story['news_score']}")
+
+    if story["google_boost"] > 0:
+        print(f"   🔥 GOOGLE TREND MATCH: +{story['google_boost']}")
+
+        for trend in story["matching_trends"][:3]:
+            print(f"      ↳ {trend}")
+    else:
+        print("   Google trend match: none")
+
     print(f"   Source: {story['source']}")
     print(f"   {story['link']}")
 
@@ -153,7 +260,23 @@ for story in ranked_stories:
         break
 
 
+# -----------------------------------
+# ALSO SHOW GOOGLE'S RAW TRENDS
+# -----------------------------------
+
 print()
-print("=" * 60)
+print("=" * 65)
+print("🔎 CURRENT GOOGLE TRENDS UK")
+print("=" * 65)
+
+for number, trend in enumerate(
+    google_trends[:20],
+    start=1
+):
+    print(f"{number}. {trend['title']}")
+
+
+print()
+print("=" * 65)
 print("Radar complete.")
-print("=" * 60)
+print("=" * 65)
