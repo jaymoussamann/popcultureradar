@@ -1,128 +1,96 @@
-        )
-
-        print(
-            f"   🔎 Google: "
-            f"{trend['title']}"
-        )
-
-        if len(shown_google) >= 2:
-            break
-
+import urllib.request
+import xml.etree.ElementTree as ET
+from collections import Counter
+from datetime import datetime, timezone
+import re
+import html
 
 # ============================================================
-# HOT RIGHT NOW
+# POP CULTURE RADAR - VERSION 0.6
+# News + Google Trends + YouTube + Topic Clustering
 # ============================================================
 
-print()
-print()
-print("=" * 72)
-print("🔥 HOT RIGHT NOW")
-print("Clustered topics with the strongest independent signals")
-print("=" * 72)
-
-hot_topics = [
-    topic
-    for topic in final_topics
-    if (
-        topic["score"] >= 25
-        and topic["platforms"] >= 1
-    )
+NEWS_FEEDS = [
+    ("Variety", "https://variety.com/feed/"),
+    ("Deadline", "https://deadline.com/feed/"),
+    ("Hollywood Reporter", "https://www.hollywoodreporter.com/feed/"),
+    ("Rolling Stone", "https://www.rollingstone.com/tv-movies/feed/"),
 ]
 
-for number, topic in enumerate(
-    hot_topics[:10],
-    start=1
-):
-    print_topic(number, topic)
+GOOGLE_TRENDS_URL = "https://trends.google.com/trending/rss?geo=GB"
 
-
-# ============================================================
-# CREATOR SIGNALS
-# ============================================================
-
-print()
-print()
-print("=" * 72)
-print("⚡ CREATOR SIGNALS")
-print("Fresh subjects appearing on your YouTube watchlist")
-print("=" * 72)
-
-creator_topics = [
-    topic
-    for topic in final_topics
-    if topic["youtube"]
+YOUTUBE_CHANNELS = [
+    ("The Rest Is Entertainment", "@TheRestIsEntertainment"),
+    ("Screen Rant", "@ScreenRant"),
+    ("Dan Cashio Reacts", "@dancashioreacts"),
 ]
 
-for number, topic in enumerate(
-    creator_topics[:10],
-    start=1
-):
-    print_topic(number, topic)
+IGNORE_WORDS = {
+    "the", "and", "for", "with", "that", "this", "from",
+    "has", "have", "will", "about", "after", "into",
+    "their", "they", "its", "are", "was", "who", "why",
+    "how", "new", "says", "over", "more", "his", "her",
+    "film", "movie", "movies", "show", "shows", "series",
+    "season", "episode", "episodes", "star", "stars",
+    "official", "trailer", "video", "reaction", "reacts",
+    "watching", "first", "time", "latest", "explained",
+    "best", "worst", "really", "your", "what", "when",
+    "where", "which", "could", "would", "should", "being",
+    "gets", "just", "than", "then", "them", "these",
+    "those", "here", "there", "also", "very"
+}
 
 
 # ============================================================
-# EARLY SIGNALS
-#
-# YouTube activity without strong news coverage can be
-# particularly interesting for spotting subjects early.
+# DOWNLOAD
 # ============================================================
 
-print()
-print()
-print("=" * 72)
-print("👀 EARLY SIGNALS")
-print("Creator activity that may not yet have broad news coverage")
-print("=" * 72)
-
-early_topics = [
-    topic
-    for topic in final_topics
-    if (
-        topic["youtube"]
-        and len({item["source"] for item in topic["news"]}) <= 1
+def download(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 Chrome/120 Safari/537.36"
+            )
+        }
     )
-]
 
-for number, topic in enumerate(
-    early_topics[:10],
-    start=1
-):
-    print_topic(number, topic)
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return response.read()
 
 
 # ============================================================
-# RECENT CREATOR ACTIVITY
+# NEWS
 # ============================================================
 
-print()
-print()
-print("=" * 72)
-print("▶️ RECENT CREATOR ACTIVITY — LAST 7 DAYS")
-print("=" * 72)
+def get_news_feed(source, url):
+    try:
+        root = ET.fromstring(download(url))
+        stories = []
 
-recent_youtube.sort(
-    key=lambda video: video.get(
-        "published",
-        ""
-    ),
-    reverse=True
-)
+        for item in root.findall(".//item"):
+            title = item.findtext("title")
+            link = item.findtext("link")
 
-for video in recent_youtube:
+            if title:
+                stories.append({
+                    "type": "news",
+                    "source": source,
+                    "title": html.unescape(title.strip()),
+                    "link": link or ""
+                })
 
-    print()
-    print(
-        f"{recency_label(video)} | "
-        f"{video['source']}"
-    )
+        return stories
 
-    print(
-        f"   {video['title']}"
-    )
-
-    print(
-        f"   {video['link']}"
-    )
+    except Exception as error:
+        print(f"Could not read {source}: {error}")
+        return []
 
 
-print()
+# ============================================================
+# GOOGLE TRENDS
+# ============================================================
+
+def get_google_trends():
+    try:
