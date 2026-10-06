@@ -6,8 +6,8 @@ import re
 import html
 
 # ============================================================
-# POP CULTURE RADAR - VERSION 1.1
-# News + Google Trends + YouTube + Editorial Action Decisions
+# POP CULTURE RADAR - VERSION 1.2
+# News + Google Trends + YouTube + Daily Editorial Briefing
 # ============================================================
 
 NEWS_FEEDS = [
@@ -316,8 +316,8 @@ def recency_label(video):
 
 print()
 print("=" * 72)
-print("🔥 POP CULTURE RADAR 1.1")
-print("Editorial Action Decisions + Independent Source Momentum")
+print("🔥 POP CULTURE RADAR 1.2")
+print("Daily Editorial Briefing + Independent Source Momentum")
 print("=" * 72)
 print()
 
@@ -964,6 +964,91 @@ for video in recent_youtube:
         f"   {video['link']}"
     )
 
+
+
+# ============================================================
+# DAILY REPORT FILE
+# ============================================================
+
+def report_signal_line(item):
+    return (
+        f"News {item['news_count']} | "
+        f"YouTube {item['youtube_count']} | "
+        f"Google {item['google_count']}"
+    )
+
+
+def build_daily_report(opportunities):
+    today = datetime.now(timezone.utc).strftime("%d %B %Y")
+
+    lines = [
+        "POP CULTURE RADAR",
+        today,
+        "",
+        "A simple daily briefing from the strongest signals found in this run.",
+        ""
+    ]
+
+    sections = [
+        ("COVER NOW", "Stories with enough independent confirmation to consider now."),
+        ("INVESTIGATE", "Promising leads worth researching before committing."),
+        ("WATCH", "Early signals that need more confirmation.")
+    ]
+
+    for move, description in sections:
+        matching = [
+            item for item in opportunities
+            if item["move"] == move
+        ]
+
+        lines.append("=" * 72)
+        lines.append(move)
+        lines.append(description)
+        lines.append("=" * 72)
+        lines.append("")
+
+        if not matching:
+            lines.append("No items in this category today.")
+            lines.append("")
+            continue
+
+        for number, item in enumerate(matching, start=1):
+            topic = item["topic"]
+
+            lines.append(f"{number}. {topic['title']}")
+            lines.append(
+                f"   {item['label']} | "
+                f"Confidence: {item['confidence']} | "
+                f"Priority: {item['priority']}"
+            )
+            lines.append(f"   Signals: {report_signal_line(item)}")
+            lines.append("")
+            lines.append("   Why:")
+            lines.append(f"   {item['explanation']}")
+            lines.append("")
+            lines.append("   Next step:")
+            lines.append(f"   {next_step_for_move(move)}")
+            lines.append("")
+
+    lines.append("=" * 72)
+    lines.append("END OF DAILY BRIEFING")
+    lines.append("=" * 72)
+
+    return "\n".join(lines) + "\n"
+
+
+daily_report = build_daily_report(ranked_opportunities[:7])
+
+report_filename = "pop_culture_radar_report.txt"
+
+with open(report_filename, "w", encoding="utf-8") as report_file:
+    report_file.write(daily_report)
+
+print()
+print("=" * 72)
+print("📝 DAILY REPORT CREATED")
+print(f"Saved as: {report_filename}")
+print("=" * 72)
 
 print()
 print("=" * 72)
