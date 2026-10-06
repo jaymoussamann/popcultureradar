@@ -4,10 +4,10 @@ from collections import Counter
 import re
 import html
 
-# -----------------------------------
-# POP CULTURE RADAR - VERSION 0.2
-# Entertainment News + Google Trends
-# -----------------------------------
+# ------------------------------------------------
+# POP CULTURE RADAR - VERSION 0.4
+# News + Google Trends + YouTube Creator Watchlist
+# ------------------------------------------------
 
 NEWS_FEEDS = [
     ("Variety", "https://variety.com/feed/"),
@@ -16,11 +16,13 @@ NEWS_FEEDS = [
     ("Rolling Stone", "https://www.rollingstone.com/tv-movies/feed/"),
 ]
 
-# Google Trends RSS
-# GB = United Kingdom. We can add US and other countries later.
-GOOGLE_TRENDS_URL = (
-    "https://trends.google.com/trending/rss?geo=GB"
-)
+GOOGLE_TRENDS_URL = "https://trends.google.com/trending/rss?geo=GB"
+
+YOUTUBE_CHANNELS = [
+    ("The Rest Is Entertainment", "@TheRestIsEntertainment"),
+    ("Screen Rant", "@ScreenRant"),
+    ("Dan Cashio Reacts", "@dancashioreacts"),
+]
 
 IGNORE_WORDS = {
     "the", "and", "for", "with", "that", "this", "from",
@@ -28,14 +30,20 @@ IGNORE_WORDS = {
     "their", "they", "its", "are", "was", "who", "why",
     "how", "new", "says", "over", "more", "his", "her",
     "film", "movie", "movies", "show", "shows", "series",
-    "season", "episode", "star", "stars"
+    "season", "episode", "star", "stars", "official",
+    "trailer", "video", "reaction", "reacts"
 }
 
 
-def download_xml(url):
+def download(url):
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "Mozilla/5.0"}
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 Chrome/120 Safari/537.36"
+            )
+        }
     )
 
     with urllib.request.urlopen(request, timeout=20) as response:
@@ -43,10 +51,8 @@ def download_xml(url):
 
 
 def get_news_feed(source, url):
-    """Download entertainment headlines."""
-
     try:
-        root = ET.fromstring(download_xml(url))
+        root = ET.fromstring(download(url))
 
         stories = []
 
@@ -69,10 +75,8 @@ def get_news_feed(source, url):
 
 
 def get_google_trends():
-    """Get Google's current UK trending searches."""
-
     try:
-        root = ET.fromstring(download_xml(GOOGLE_TRENDS_URL))
+        root = ET.fromstring(download(GOOGLE_TRENDS_URL))
 
         trends = []
 
@@ -93,96 +97,169 @@ def get_google_trends():
         return []
 
 
+def find_youtube_channel_id(handle):
+    """
+    Visit a YouTube @handle page and discover
+    the underlying UC... channel ID.
+    """
+
+    try:
+        url = f"https://www.youtube.com/{handle}"
+
+        page = download(url).decode(
+            "utf-8",
+            errors="ignore"
+        )
+
+        patterns = [
+            r'"channelId":"(UC[a-zA-Z0-9_-]{20,})"',
+            r'"externalId":"(UC[a-zA-Z0-9_-]{20,})"',
+            r'channel_id=(UC[a-zA-Z0-9_-]{20,})'
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, page)
+
+            if match:
+                return match.group(1)
+
+        return None
+
+    except Exception as error:
+        print(
+            f"Could not resolve YouTube handle "
+            f"{handle}: {error}"
+        )
+        return None
+
+
+def get_youtube_feed(channel_name, handle):
+    """
+    Resolve a YouTube handle and collect the
+    channel's latest uploads from its Atom feed.
+    """
+
+    channel_id = find_youtube_channel_id(handle)
+
+    if not channel_id:
+        print(f"  Could not find channel ID for {handle}")
+        return []
+
+    feed_url = (
+        "https://www.youtube.com/feeds/videos.xml"
+        f"?channel_id={channel_id}"
+    )
+
+    try:
+        root = ET.fromstring(download(feed_url))
+
+        namespace = {
+            "atom": "http://www.w3.org/2005/Atom",
+            "yt": "http://www.youtube.com/xml/schemas/2015"
+        }
+
+        videos = []
+
+        for entry in root.findall("atom:entry", namespace):
+
+            title = entry.findtext(
+                "atom:title",
+                default="",
+                namespaces=namespace
+            )
+
+            video_id = entry.findtext(
+                "yt:videoId",
+                default="",
+                namespaces=namespace
+            )
+
+            published = entry.findtext(
+                "atom:published",
+                default="",
+                namespaces=namespace
+            )
+
+            if title:
+                videos.append({
+                    "channel": channel_name,
+                    "title": html.unescape(title.strip()),
+                    "link": (
+                        f"https://www.youtube.com/watch?v={video_id}"
+                        if video_id else ""
+                    ),
+                    "published": published
+                })
+
+        return videos
+
+    except Exception as error:
+        print(
+            f"Could not read YouTube feed for "
+            f"{channel_name}: {error}"
+        )
+        return []
+
+
 def important_words(text):
-    words = re.findall(r"[A-Za-z0-9']+", text.lower())
+    words = re.findall(
+        r"[A-Za-z0-9']+",
+        text.lower()
+    )
 
     return [
         word for word in words
-        if len(word) > 3 and word not in IGNORE_WORDS
+        if (
+            len(word) > 3
+            and word not in IGNORE_WORDS
+            and not word.isdigit()
+        )
     ]
 
 
-def trend_matches_story(trend_title, story_title):
+def strict_match(title_a, title_b):
     """
-    Decide whether a Google trend genuinely matches
-    an entertainment headline.
+    Conservative topic matching.
 
-    We deliberately use strict rules to avoid false
-    matches caused by generic words or numbers.
+    Two or more meaningful shared words are
+    normally required.
+
+    A single distinctive long word can match,
+    which helps with titles such as Superman,
+    Bridgerton or Oppenheimer.
     """
 
-    trend_words = important_words(trend_title)
-    story_words = important_words(story_title)
+    words_a = set(important_words(title_a))
+    words_b = set(important_words(title_b))
 
-    # Ignore numbers completely when matching.
-    trend_words = [
-        word for word in trend_words
-        if not word.isdigit()
-    ]
-
-    story_words = [
-        word for word in story_words
-        if not word.isdigit()
-    ]
-
-    if not trend_words or not story_words:
+    if not words_a or not words_b:
         return False
 
-    trend_set = set(trend_words)
-    story_set = set(story_words)
+    shared = words_a.intersection(words_b)
 
-    shared = trend_set.intersection(story_set)
+    if len(shared) >= 2:
+        return True
 
-    # -----------------------------------
-    # RULE 1
-    # Multi-word Google trends need at
-    # least TWO matching meaningful words.
-    #
-    # Example:
-    # "Andrew Garfield"
-    # matches a headline containing
-    # "Andrew Garfield".
-    # -----------------------------------
+    if len(shared) == 1:
+        word = next(iter(shared))
 
-    if len(trend_set) >= 2:
-        return len(shared) >= 2
-
-    # -----------------------------------
-    # RULE 2
-    # A one-word Google trend must be a
-    # reasonably distinctive word.
-    #
-    # This allows things such as:
-    # "Beyonce"
-    # "Wicked"
-    # "Superman"
-    #
-    # but avoids tiny/generic matches.
-    # -----------------------------------
-
-    if len(trend_set) == 1:
-
-        word = next(iter(trend_set))
-
-        if len(word) < 6:
-            return False
-
-        return word in story_set
+        if len(word) >= 8:
+            return True
 
     return False
 
 
 print()
-print("=" * 65)
-print("🔥 POP CULTURE RADAR 0.2")
-print("Entertainment News + Google Trends")
-print("=" * 65)
+print("=" * 70)
+print("🔥 POP CULTURE RADAR 0.4")
+print("News + Google Trends + YouTube Creator Signals")
+print("=" * 70)
 print()
 
 
-# -----------------------------------
-# COLLECT ENTERTAINMENT NEWS
-# -----------------------------------
+# ------------------------------------------------
+# NEWS
+# ------------------------------------------------
 
 all_stories = []
 
@@ -197,70 +274,134 @@ for source, url in NEWS_FEEDS:
     all_stories.extend(stories)
 
 
-# -----------------------------------
-# COLLECT GOOGLE TRENDS
-# -----------------------------------
+# ------------------------------------------------
+# GOOGLE
+# ------------------------------------------------
 
 print()
 print("Scanning Google Trends UK...")
 
 google_trends = get_google_trends()
 
-print(f"  Found {len(google_trends)} trending searches")
+print(
+    f"  Found {len(google_trends)} "
+    f"trending searches"
+)
+
+
+# ------------------------------------------------
+# YOUTUBE
+# ------------------------------------------------
+
+print()
+print("Scanning YouTube creator watchlist...")
+
+youtube_videos = []
+
+for channel_name, handle in YOUTUBE_CHANNELS:
+
+    print(f"  Scanning {channel_name}...")
+
+    videos = get_youtube_feed(
+        channel_name,
+        handle
+    )
+
+    print(f"    Found {len(videos)} recent videos")
+
+    youtube_videos.extend(videos)
 
 
 print()
-print(f"Entertainment stories scanned: {len(all_stories)}")
-print(f"Google trends scanned: {len(google_trends)}")
+print("-" * 70)
+print(f"Entertainment stories: {len(all_stories)}")
+print(f"Google trends: {len(google_trends)}")
+print(f"YouTube videos: {len(youtube_videos)}")
+print("-" * 70)
 print()
 
 
-# -----------------------------------
-# FIND COMMON WORDS IN NEWS
-# -----------------------------------
+# ------------------------------------------------
+# NEWS SIGNAL
+# ------------------------------------------------
 
 word_counts = Counter()
 
 for story in all_stories:
-    words = set(important_words(story["title"]))
-    word_counts.update(words)
+    word_counts.update(
+        set(important_words(story["title"]))
+    )
 
 
-# -----------------------------------
-# SCORE STORIES
-# -----------------------------------
+# ------------------------------------------------
+# SCORE EACH STORY
+# ------------------------------------------------
 
 ranked_stories = []
 
 for story in all_stories:
 
-    words = important_words(story["title"])
+    story_words = set(
+        important_words(story["title"])
+    )
 
     news_score = sum(
         word_counts[word]
-        for word in set(words)
+        for word in story_words
     )
 
-    matching_trends = []
+    matching_google = []
 
     for trend in google_trends:
 
-        if trend_matches_story(
-            trend["title"],
-            story["title"]
+        if strict_match(
+            story["title"],
+            trend["title"]
         ):
-            matching_trends.append(trend["title"])
+            matching_google.append(
+                trend["title"]
+            )
 
-    # Google confirmation gives a large boost.
-    google_boost = len(matching_trends) * 20
+    matching_youtube = []
 
-    total_score = news_score + google_boost
+    for video in youtube_videos:
+
+        if strict_match(
+            story["title"],
+            video["title"]
+        ):
+            matching_youtube.append(video)
+
+    # Cross-platform confirmation is valuable.
+    google_boost = min(
+        len(matching_google) * 20,
+        40
+    )
+
+    youtube_channels = {
+        video["channel"]
+        for video in matching_youtube
+    }
+
+    # Reward multiple independent creators.
+    youtube_boost = min(
+        len(youtube_channels) * 15,
+        45
+    )
+
+    total_score = (
+        news_score
+        + google_boost
+        + youtube_boost
+    )
 
     ranked_stories.append({
         **story,
         "news_score": news_score,
+        "google_matches": matching_google,
         "google_boost": google_boost,
-        "matching_trends": matching_trends,
+        "youtube_matches": matching_youtube,
+        "youtube_boost": youtube_boost,
         "score": total_score
     })
 
@@ -271,38 +412,78 @@ ranked_stories.sort(
 )
 
 
-# -----------------------------------
-# DISPLAY RESULTS
-# -----------------------------------
+# ------------------------------------------------
+# RESULTS
+# ------------------------------------------------
 
-print("=" * 65)
+print("=" * 70)
 print("📈 TODAY'S POP CULTURE RADAR")
-print("=" * 65)
+print("=" * 70)
 
 seen_titles = set()
 position = 1
 
 for story in ranked_stories:
 
-    title_key = story["title"].lower()
+    key = story["title"].lower()
 
-    if title_key in seen_titles:
+    if key in seen_titles:
         continue
 
-    seen_titles.add(title_key)
+    seen_titles.add(key)
 
     print()
     print(f"{position}. {story['title']}")
     print(f"   RADAR SCORE: {story['score']}")
-    print(f"   News signal: {story['news_score']}")
+    print(
+        f"   📰 News signal: "
+        f"{story['news_score']}"
+    )
 
-    if story["google_boost"] > 0:
-        print(f"   🔥 GOOGLE TREND MATCH: +{story['google_boost']}")
+    if story["google_matches"]:
 
-        for trend in story["matching_trends"][:3]:
+        print(
+            f"   🔎 Google confirmation: "
+            f"+{story['google_boost']}"
+        )
+
+        for trend in story["google_matches"][:3]:
             print(f"      ↳ {trend}")
+
     else:
-        print("   Google trend match: none")
+        print("   🔎 Google confirmation: none")
+
+    if story["youtube_matches"]:
+
+        print(
+            f"   ▶️ YouTube confirmation: "
+            f"+{story['youtube_boost']}"
+        )
+
+        shown = set()
+
+        for video in story["youtube_matches"]:
+
+            identifier = (
+                video["channel"],
+                video["title"]
+            )
+
+            if identifier in shown:
+                continue
+
+            shown.add(identifier)
+
+            print(
+                f"      ↳ {video['channel']}: "
+                f"{video['title']}"
+            )
+
+            if len(shown) >= 3:
+                break
+
+    else:
+        print("   ▶️ YouTube confirmation: none")
 
     print(f"   Source: {story['source']}")
     print(f"   {story['link']}")
@@ -313,14 +494,37 @@ for story in ranked_stories:
         break
 
 
-# -----------------------------------
-# ALSO SHOW GOOGLE'S RAW TRENDS
-# -----------------------------------
+# ------------------------------------------------
+# YOUTUBE WATCHLIST OUTPUT
+# ------------------------------------------------
 
 print()
-print("=" * 65)
+print("=" * 70)
+print("▶️ LATEST VIDEOS FROM YOUR YOUTUBE WATCHLIST")
+print("=" * 70)
+
+for video in youtube_videos:
+
+    print()
+    print(
+        f"{video['channel']}: "
+        f"{video['title']}"
+    )
+
+    if video["published"]:
+        print(f"   Published: {video['published']}")
+
+    print(f"   {video['link']}")
+
+
+# ------------------------------------------------
+# GOOGLE OUTPUT
+# ------------------------------------------------
+
+print()
+print("=" * 70)
 print("🔎 CURRENT GOOGLE TRENDS UK")
-print("=" * 65)
+print("=" * 70)
 
 for number, trend in enumerate(
     google_trends[:20],
@@ -330,6 +534,6 @@ for number, trend in enumerate(
 
 
 print()
-print("=" * 65)
+print("=" * 70)
 print("Radar complete.")
-print("=" * 65)
+print("=" * 70)
