@@ -1013,3 +1013,42 @@ def classify_opportunity(news_count, youtube_count, google_count=0):
         "WATCH",
         "There is an emerging signal, but not enough independent confirmation yet."
     )
+# ============================================================
+# EDITORIAL OPPORTUNITIES
+# ============================================================
+
+print()
+print("=" * 72)
+print("💡 EDITORIAL OPPORTUNITIES")
+print("What the signal mix suggests you should investigate")
+print("=" * 72)
+
+opportunity_found = False
+
+for cluster in clusters[:10]:
+    news_count = len(cluster.get("news_sources", []))
+    youtube_count = len(cluster.get("youtube_creators", []))
+    google_count = len(cluster.get("google_matches", []))
+
+    opportunity = classify_opportunity(
+        news_count,
+        youtube_count,
+        google_count
+    )
+
+    if opportunity:
+        opportunity_found = True
+        label, explanation = opportunity
+
+        print()
+        print(f"• {cluster['title']}")
+        print(f"  OPPORTUNITY: {label}")
+        print(f"  WHY: {explanation}")
+        print(
+            f"  SIGNAL MIX: News {news_count} | "
+            f"YouTube {youtube_count} | Google {google_count}"
+        )
+
+if not opportunity_found:
+    print()
+    print("No strong editorial opportunities detected in this run.")
