@@ -6,8 +6,8 @@ import re
 import html
 
 # ============================================================
-# POP CULTURE RADAR - VERSION 0.7
-# News + Google Trends + YouTube + Source Diversity
+# POP CULTURE RADAR - VERSION 0.8
+# News + Google Trends + YouTube + Entity-Aware Topic Clustering
 # ============================================================
 
 NEWS_FEEDS = [
@@ -316,8 +316,8 @@ def recency_label(video):
 
 print()
 print("=" * 72)
-print("🔥 POP CULTURE RADAR 0.7")
-print("Topic Clustering + Independent Source Momentum")
+print("🔥 POP CULTURE RADAR 0.8")
+print("Entity-Aware Clustering + Independent Source Momentum")
 print("=" * 72)
 print()
 
@@ -421,10 +421,68 @@ def item_key(item):
     )
 
 
+# Words that are common in entertainment headlines but are too broad to
+# prove that two stories concern the same subject.
+GENERIC_TOPIC_WORDS = {
+    "office", "hollywood", "actor", "actress", "director", "producer",
+    "studio", "studios", "television", "streaming", "netflix", "amazon",
+    "apple", "disney", "paramount", "warner", "bros", "universal",
+    "review", "reviews", "interview", "exclusive", "report", "reports",
+    "box", "office", "cast", "casting", "role", "roles", "award", "awards",
+    "trailer", "teaser", "clip", "clips", "watch", "reaction", "reactions",
+    "ending", "scene", "scenes", "story", "stories", "news", "update",
+    "updates", "reveals", "revealed", "explains", "talks", "working",
+    "worked", "work", "biggest", "ever"
+}
+
+
+def normalized_topic_words(text):
+    """Important words with broad entertainment vocabulary removed."""
+    return {
+        word
+        for word in important_words(text)
+        if word not in GENERIC_TOPIC_WORDS
+    }
+
+
+def entity_tokens(text):
+    """
+    Pull out likely names/titles from headline casing and quoted phrases.
+
+    This is intentionally lightweight: it gives us entity awareness without
+    needing an API, model, or third-party NLP package.
+    """
+    entities = set()
+
+    # Anything inside straight or curly quotation marks is often a title.
+    quoted_chunks = re.findall(
+        r"[\"'‘’“”]([^\"'‘’“”]{2,80})[\"'‘’“”]",
+        text
+    )
+
+    for chunk in quoted_chunks:
+        words = normalized_topic_words(chunk)
+        entities.update(words)
+
+    # Capitalised words are often people, programmes, films, franchises, etc.
+    capitalized = re.findall(r"\b[A-Z][A-Za-z0-9'-]{3,}\b", text)
+
+    for word in capitalized:
+        normalized = word.lower().strip("'")
+        if (
+            normalized not in IGNORE_WORDS
+            and normalized not in GENERIC_TOPIC_WORDS
+            and not normalized.isdigit()
+        ):
+            entities.add(normalized)
+
+    return entities
+
+
 def topic_similarity(title_a, title_b):
-    """Return a 0..1 similarity score for two titles."""
-    words_a = set(important_words(title_a))
-    words_b = set(important_words(title_b))
+    """Return a conservative 0..1 similarity score for two titles."""
+    words_a = normalized_topic_words(title_a)
+    words_b = normalized_topic_words(title_b)
 
     if not words_a or not words_b:
         return 0.0
@@ -434,8 +492,6 @@ def topic_similarity(title_a, title_b):
     if not shared:
         return 0.0
 
-    # Coverage is deliberately asymmetric-friendly: two titles can be
-    # about the same subject even if one is much longer than the other.
     coverage = max(
         len(shared) / len(words_a),
         len(shared) / len(words_b)
@@ -444,31 +500,53 @@ def topic_similarity(title_a, title_b):
     union = words_a | words_b
     jaccard = len(shared) / len(union)
 
-    distinctive_bonus = 0.0
-    if any(len(word) >= 8 for word in shared):
-        distinctive_bonus = 0.12
+    entities_a = entity_tokens(title_a)
+    entities_b = entity_tokens(title_b)
+    shared_entities = entities_a & entities_b
 
-    return min(1.0, (coverage * 0.70) + (jaccard * 0.30) + distinctive_bonus)
+    entity_bonus = min(len(shared_entities) * 0.18, 0.36)
+
+    return min(
+        1.0,
+        (coverage * 0.62)
+        + (jaccard * 0.28)
+        + entity_bonus
+    )
 
 
 def same_topic(title_a, title_b):
-    words_a = set(important_words(title_a))
-    words_b = set(important_words(title_b))
+    """
+    Decide whether two headlines are genuinely about the same subject.
+
+    v0.8 deliberately removes the old rule that allowed one long shared word
+    to merge two topics. That rule caused false matches such as:
+      Digger / Tom Cruise  <->  Creed Bratton / The Office / Primetime
+    simply because both headlines contained 'office'.
+
+    A match now needs either:
+      * multiple meaningful shared words, or
+      * a likely shared named entity plus supporting overlap.
+    """
+    words_a = normalized_topic_words(title_a)
+    words_b = normalized_topic_words(title_b)
     shared = words_a & words_b
 
+    entities_a = entity_tokens(title_a)
+    entities_b = entity_tokens(title_b)
+    shared_entities = entities_a & entities_b
+
+    # Three meaningful words is strong evidence even when phrasing differs.
     if len(shared) >= 3:
         return True
 
-    if len(shared) >= 2 and topic_similarity(title_a, title_b) >= 0.42:
+    # Two meaningful words can match when they cover a useful part of a title.
+    if len(shared) >= 2 and topic_similarity(title_a, title_b) >= 0.34:
         return True
 
-    # One very distinctive shared name/term can join short titles,
-    # but only when one title is itself short enough to be specific.
-    if len(shared) == 1:
-        word = next(iter(shared))
-        # A distinctive shared subject can connect differently worded headlines.
-        if len(word) >= 6 and min(len(words_a), len(words_b)) <= 6:
-            return True
+    # One shared named entity alone is not enough. Require one additional
+    # meaningful shared term so generic or ambiguous names cannot bridge topics.
+    if shared_entities and len(shared) >= 2:
+        return True
 
     return False
 
