@@ -969,3 +969,47 @@ print()
 print("=" * 72)
 print("Radar complete.")
 print("=" * 72)
+# ============================================================
+# CONTENT OPPORTUNITY ENGINE
+# ============================================================
+
+def classify_opportunity(news_count, youtube_count, google_count=0):
+    """
+    Turn the mix of independent signals into an editorial opportunity.
+    """
+
+    if news_count >= 2 and youtube_count == 0:
+        return (
+            "NEWS GAP",
+            "Breaking across entertainment news, but not yet appearing "
+            "on the creator watchlist."
+        )
+
+    if youtube_count >= 1 and news_count == 0:
+        return (
+            "CREATOR-LED",
+            "Creator activity is appearing before broad entertainment-news coverage."
+        )
+
+    if news_count >= 1 and youtube_count >= 1:
+        return (
+            "CROSSOVER",
+            "The subject is appearing across both entertainment news and creators."
+        )
+
+    if google_count >= 1 and news_count >= 1:
+        return (
+            "SEARCH SURGE",
+            "News coverage is being reinforced by search interest."
+        )
+
+    if google_count >= 1:
+        return (
+            "SEARCH-LED",
+            "Search interest is visible before strong news or creator confirmation."
+        )
+
+    return (
+        "WATCH",
+        "There is an emerging signal, but not enough independent confirmation yet."
+    )
