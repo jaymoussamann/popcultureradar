@@ -6,8 +6,8 @@ import re
 import html
 
 # ============================================================
-# POP CULTURE RADAR - VERSION 0.8
-# News + Google Trends + YouTube + Entity-Aware Topic Clustering
+# POP CULTURE RADAR - VERSION 1.0
+# News + Google Trends + YouTube + Ranked Editorial Opportunities
 # ============================================================
 
 NEWS_FEEDS = [
@@ -316,8 +316,8 @@ def recency_label(video):
 
 print()
 print("=" * 72)
-print("🔥 POP CULTURE RADAR 0.8")
-print("Entity-Aware Clustering + Independent Source Momentum")
+print("🔥 POP CULTURE RADAR 1.0")
+print("Ranked Editorial Opportunities + Independent Source Momentum")
 print("=" * 72)
 print()
 
@@ -969,85 +969,233 @@ print()
 print("=" * 72)
 print("Radar complete.")
 print("=" * 72)
+
 # ============================================================
 # CONTENT OPPORTUNITY ENGINE
 # ============================================================
 
-def classify_opportunity(news_count, youtube_count, google_count=0):
-    """
-    Turn the mix of independent signals into an editorial opportunity.
-    """
+COMMERCE_WORDS = {
+    "deal", "deals", "discount", "discounts", "sale", "sales",
+    "prime", "shopping", "shop", "buy", "price", "prices",
+    "cheap", "cheapest", "save", "saving", "savings",
+    "percent", "off", "coupon", "coupons", "bargain",
+    "beauty", "balm", "cleanser", "serum", "skincare"
+}
 
-    if news_count >= 2 and youtube_count == 0:
-        return (
-            "NEWS GAP",
-            "Breaking across entertainment news, but not yet appearing "
-            "on the creator watchlist."
-        )
 
-    if youtube_count >= 1 and news_count == 0:
-        return (
-            "CREATOR-LED",
-            "Creator activity is appearing before broad entertainment-news coverage."
-        )
+def is_commerce_topic(topic):
+    words = set(important_words(topic["title"]))
+    return bool(words & COMMERCE_WORDS)
 
-    if news_count >= 1 and youtube_count >= 1:
-        return (
-            "CROSSOVER",
-            "The subject is appearing across both entertainment news and creators."
-        )
 
-    if google_count >= 1 and news_count >= 1:
-        return (
-            "SEARCH SURGE",
-            "News coverage is being reinforced by search interest."
-        )
-
-    if google_count >= 1:
-        return (
-            "SEARCH-LED",
-            "Search interest is visible before strong news or creator confirmation."
-        )
-
-    return (
-        "WATCH",
-        "There is an emerging signal, but not enough independent confirmation yet."
-    )
-# ============================================================
-# EDITORIAL OPPORTUNITIES
-# ============================================================
-
-print()
-print("=" * 72)
-print("💡 EDITORIAL OPPORTUNITIES")
-print("What the signal mix suggests you should investigate")
-print("=" * 72)
-
-opportunity_found = False
-
-for topic in final_topics[:10]:
+def opportunity_details(topic):
     news_count = len({item["source"] for item in topic["news"]})
     youtube_count = len({item["source"] for item in topic["youtube"]})
     google_count = len(topic["google"])
 
-    label, explanation = classify_opportunity(
-        news_count,
-        youtube_count,
-        google_count
+    # Strongest cross-platform signal.
+    if news_count >= 1 and youtube_count >= 1 and google_count >= 1:
+        return (
+            "🔥 CROSS-PLATFORM SURGE",
+            "HIGH",
+            45,
+            "News, creator activity and Google search interest are all "
+            "pointing at the same subject."
+        )
+
+    if news_count >= 1 and youtube_count >= 1:
+        return (
+            "🔥 CROSSOVER",
+            "HIGH",
+            38,
+            "The subject is appearing across both entertainment news "
+            "and watched creators."
+        )
+
+    if google_count >= 1 and news_count >= 1:
+        return (
+            "🔎 SEARCH SURGE",
+            "HIGH" if news_count >= 2 else "MEDIUM",
+            34,
+            "Entertainment-news coverage is being reinforced by "
+            "Google search interest."
+        )
+
+    if news_count >= 2 and youtube_count == 0:
+        confidence = "HIGH" if news_count >= 3 else "MEDIUM"
+        return (
+            "🔴 NEWS GAP",
+            confidence,
+            30,
+            "Multiple independent entertainment-news sources are covering "
+            "this, but none of the watched creators have covered it yet."
+        )
+
+    if youtube_count >= 2 and news_count == 0:
+        return (
+            "⚡ CREATOR-LED",
+            "MEDIUM",
+            27,
+            "Multiple watched creators are discussing this before broad "
+            "entertainment-news coverage."
+        )
+
+    if youtube_count == 1 and news_count == 0:
+        return (
+            "🟡 EARLY CREATOR SIGNAL",
+            "LOW",
+            16,
+            "A watched creator is discussing this before broad news "
+            "confirmation. Treat it as a lead to watch."
+        )
+
+    if google_count >= 1:
+        return (
+            "🔎 SEARCH-LED",
+            "LOW",
+            14,
+            "Google search interest is visible before strong news or "
+            "creator confirmation."
+        )
+
+    return (
+        "👀 WATCH",
+        "LOW",
+        0,
+        "There is activity around the subject, but not enough independent "
+        "confirmation to make it a priority."
     )
 
-    opportunity_found = True
+
+def opportunity_score(topic):
+    label, confidence, bonus, explanation = opportunity_details(topic)
+
+    score = topic["score"] + bonus
+
+    # Reward independent confirmation.
+    news_count = len({item["source"] for item in topic["news"]})
+    youtube_count = len({item["source"] for item in topic["youtube"]})
+
+    score += min(news_count, 4) * 3
+    score += min(youtube_count, 3) * 3
+
+    # Commerce/deal headlines can dominate entertainment feeds during
+    # shopping events. Keep them visible only when other signals make
+    # them genuinely noteworthy.
+    if is_commerce_topic(topic):
+        score -= 45
+
+    return score
+
+
+def editorial_angle(topic):
+    title = topic["title"]
+    news_count = len({item["source"] for item in topic["news"]})
+    youtube_count = len({item["source"] for item in topic["youtube"]})
+    google_count = len(topic["google"])
+
+    if news_count >= 2 and youtube_count == 0:
+        return (
+            "Explain why this story matters, add context, or find the "
+            "angle creators have not covered yet."
+        )
+
+    if youtube_count >= 1 and news_count == 0:
+        return (
+            "Investigate the creator conversation and look for independent "
+            "confirmation before committing to coverage."
+        )
+
+    if news_count >= 1 and youtube_count >= 1:
+        return (
+            "Use the news development as the hook and the creator reaction "
+            "as evidence of wider audience interest."
+        )
+
+    if google_count >= 1:
+        return (
+            "Find out what people are suddenly searching for and answer "
+            "the obvious audience question quickly."
+        )
+
+    return "Monitor for a second independent signal before prioritising it."
+
+
+# Build a ranked shortlist instead of labelling every feed item an opportunity.
+ranked_opportunities = []
+
+for topic in final_topics:
+    label, confidence, bonus, explanation = opportunity_details(topic)
+
+    news_count = len({item["source"] for item in topic["news"]})
+    youtube_count = len({item["source"] for item in topic["youtube"]})
+    google_count = len(topic["google"])
+
+    # Require at least one meaningful reason to surface the topic.
+    meaningful = (
+        news_count >= 2
+        or youtube_count >= 1
+        or google_count >= 1
+    )
+
+    if not meaningful:
+        continue
+
+    # Do not promote commerce stories unless they have a non-news signal.
+    if is_commerce_topic(topic) and youtube_count == 0 and google_count == 0:
+        continue
+
+    ranked_opportunities.append({
+        "topic": topic,
+        "label": label,
+        "confidence": confidence,
+        "explanation": explanation,
+        "priority": opportunity_score(topic),
+        "news_count": news_count,
+        "youtube_count": youtube_count,
+        "google_count": google_count
+    })
+
+
+ranked_opportunities.sort(
+    key=lambda item: (
+        item["priority"],
+        item["topic"]["score"],
+        item["topic"]["unique_sources"]
+    ),
+    reverse=True
+)
+
+
+print()
+print()
+print("=" * 72)
+print("💡 BEST CONTENT OPPORTUNITIES")
+print("Ranked leads worth investigating, not just everything in the feeds")
+print("=" * 72)
+
+if not ranked_opportunities:
+    print()
+    print("No strong content opportunities detected in this run.")
+
+for number, item in enumerate(ranked_opportunities[:7], start=1):
+    topic = item["topic"]
 
     print()
-    print(f"• {topic['title']}")
-    print(f"  OPPORTUNITY: {label}")
-    print(f"  WHY: {explanation}")
+    print(f"{number}. {topic['title']}")
+    print(f"   TYPE: {item['label']}")
+    print(f"   CONFIDENCE: {item['confidence']}")
+    print(f"   PRIORITY SCORE: {item['priority']}")
+    print(f"   WHY NOW: {item['explanation']}")
+    print(f"   POSSIBLE ANGLE: {editorial_angle(topic)}")
     print(
-        f"  SIGNAL MIX: News {news_count} | "
-        f"YouTube {youtube_count} | "
-        f"Google {google_count}"
+        f"   SIGNAL MIX: News {item['news_count']} | "
+        f"YouTube {item['youtube_count']} | "
+        f"Google {item['google_count']}"
     )
 
-if not opportunity_found:
-    print()
-    print("No editorial opportunities detected in this run.")
+
+print()
+print("=" * 72)
+print("Radar complete.")
+print("=" * 72)
