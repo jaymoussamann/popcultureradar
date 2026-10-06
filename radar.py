@@ -6,8 +6,8 @@ import re
 import html
 
 # ============================================================
-# POP CULTURE RADAR - VERSION 0.6
-# News + Google Trends + YouTube + Topic Clustering
+# POP CULTURE RADAR - VERSION 0.7
+# News + Google Trends + YouTube + Source Diversity
 # ============================================================
 
 NEWS_FEEDS = [
@@ -316,8 +316,8 @@ def recency_label(video):
 
 print()
 print("=" * 72)
-print("🔥 POP CULTURE RADAR 0.6")
-print("Topic Clustering + Cross-Source Momentum Engine")
+print("🔥 POP CULTURE RADAR 0.7")
+print("Topic Clustering + Independent Source Momentum")
 print("=" * 72)
 print()
 
@@ -466,7 +466,8 @@ def same_topic(title_a, title_b):
     # but only when one title is itself short enough to be specific.
     if len(shared) == 1:
         word = next(iter(shared))
-        if len(word) >= 9 and min(len(words_a), len(words_b)) <= 3:
+        # A distinctive shared subject can connect differently worded headlines.
+        if len(word) >= 6 and min(len(words_a), len(words_b)) <= 6:
             return True
 
     return False
@@ -540,14 +541,16 @@ def score_cluster(cluster):
     # Google is a separate public-interest confirmation signal.
     google_score = min(len(google) * 20, 40)
 
-    # Count creator channels, then add a smaller recency component.
+    # One creator is one signal, regardless of how many videos they publish.
+    # A single creator can surface an early lead, but cannot make a topic "hot"
+    # by posting repeatedly.
     youtube_score = min(len(youtube_channels) * 12, 36)
 
     if youtube:
         freshest = max(youtube_recency_score(video) for video in youtube)
-        youtube_score += min(freshest, 20)
+        youtube_score += min(freshest // 2, 10)
 
-    youtube_score = min(youtube_score, 50)
+    youtube_score = min(youtube_score, 40)
 
     platforms = sum(bool(group) for group in (news, google, youtube))
 
@@ -564,13 +567,8 @@ def score_cluster(cluster):
 
     source_diversity_bonus = min(max(unique_sources - 1, 0) * 3, 15)
 
-    # Repetition inside one source is intentionally capped so one prolific
-    # channel cannot dominate the radar by itself.
-    repetition_bonus = min(
-        max(len(news) - len(news_sources), 0)
-        + max(len(youtube) - len(youtube_channels), 0),
-        8
-    )
+    # Repeated items from the same publisher/creator add no momentum.
+    repetition_bonus = 0
 
     total_score = (
         news_score
@@ -760,8 +758,11 @@ hot_topics = [
     topic
     for topic in final_topics
     if (
-        topic["score"] >= 25
-        and topic["platforms"] >= 1
+        topic["score"] >= 30
+        and (
+            topic["platforms"] >= 2
+            or topic["unique_sources"] >= 2
+        )
     )
 ]
 
@@ -786,7 +787,13 @@ print("=" * 72)
 creator_topics = [
     topic
     for topic in final_topics
-    if topic["youtube"]
+    if (
+        topic["youtube"]
+        and (
+            len({item["source"] for item in topic["youtube"]}) >= 2
+            or topic["platforms"] >= 2
+        )
+    )
 ]
 
 for number, topic in enumerate(
@@ -815,12 +822,31 @@ early_topics = [
     for topic in final_topics
     if (
         topic["youtube"]
-        and len({item["source"] for item in topic["news"]}) <= 1
+        and topic["platforms"] == 1
+        and len({item["source"] for item in topic["youtube"]}) == 1
     )
 ]
 
+balanced_early_topics = []
+early_creator_counts = Counter()
+
+for topic in early_topics:
+    creators = {item["source"] for item in topic["youtube"]}
+    creator = next(iter(creators)) if len(creators) == 1 else None
+
+    if creator and early_creator_counts[creator] >= 3:
+        continue
+
+    balanced_early_topics.append(topic)
+
+    if creator:
+        early_creator_counts[creator] += 1
+
+    if len(balanced_early_topics) >= 10:
+        break
+
 for number, topic in enumerate(
-    early_topics[:10],
+    balanced_early_topics,
     start=1
 ):
     print_topic(number, topic)
