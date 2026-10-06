@@ -6,8 +6,8 @@ import re
 import html
 
 # ============================================================
-# POP CULTURE RADAR - VERSION 1.0
-# News + Google Trends + YouTube + Ranked Editorial Opportunities
+# POP CULTURE RADAR - VERSION 1.1
+# News + Google Trends + YouTube + Editorial Action Decisions
 # ============================================================
 
 NEWS_FEEDS = [
@@ -316,8 +316,8 @@ def recency_label(video):
 
 print()
 print("=" * 72)
-print("🔥 POP CULTURE RADAR 1.0")
-print("Ranked Editorial Opportunities + Independent Source Momentum")
+print("🔥 POP CULTURE RADAR 1.1")
+print("Editorial Action Decisions + Independent Source Momentum")
 print("=" * 72)
 print()
 
@@ -1121,6 +1121,58 @@ def editorial_angle(topic):
     return "Monitor for a second independent signal before prioritising it."
 
 
+
+def editorial_move(topic):
+    """Turn signal strength into a simple newsroom action."""
+    news_count = len({item["source"] for item in topic["news"]})
+    youtube_count = len({item["source"] for item in topic["youtube"]})
+    google_count = len(topic["google"])
+
+    if is_commerce_topic(topic) and youtube_count == 0 and google_count == 0:
+        return "IGNORE"
+
+    if (
+        (news_count >= 3)
+        or (news_count >= 1 and youtube_count >= 1)
+        or (news_count >= 1 and google_count >= 1)
+    ):
+        return "COVER NOW"
+
+    if (
+        news_count >= 2
+        or youtube_count >= 2
+        or (youtube_count >= 1 and google_count >= 1)
+    ):
+        return "INVESTIGATE"
+
+    if youtube_count >= 1 or google_count >= 1:
+        return "WATCH"
+
+    return "IGNORE"
+
+
+def next_step_for_move(move):
+    if move == "COVER NOW":
+        return (
+            "The signal is independently confirmed. Consider moving this "
+            "into your content planning now."
+        )
+
+    if move == "INVESTIGATE":
+        return (
+            "There is enough activity to research the story now, but check "
+            "the details and audience angle before committing."
+        )
+
+    if move == "WATCH":
+        return (
+            "Keep it on the radar. Wait for another creator, news outlet, "
+            "or Google signal before treating it as a confirmed trend."
+        )
+
+    return "Low editorial value from the current signal mix. Skip for now."
+
+
 # Build a ranked shortlist instead of labelling every feed item an opportunity.
 ranked_opportunities = []
 
@@ -1153,7 +1205,8 @@ for topic in final_topics:
         "priority": opportunity_score(topic),
         "news_count": news_count,
         "youtube_count": youtube_count,
-        "google_count": google_count
+        "google_count": google_count,
+        "move": editorial_move(topic)
     })
 
 
@@ -1171,7 +1224,7 @@ print()
 print()
 print("=" * 72)
 print("💡 BEST CONTENT OPPORTUNITIES")
-print("Ranked leads worth investigating, not just everything in the feeds")
+print("Ranked leads with a simple editorial decision")
 print("=" * 72)
 
 if not ranked_opportunities:
@@ -1180,20 +1233,24 @@ if not ranked_opportunities:
 
 for number, item in enumerate(ranked_opportunities[:7], start=1):
     topic = item["topic"]
+    move = item["move"]
 
     print()
     print(f"{number}. {topic['title']}")
-    print(f"   TYPE: {item['label']}")
-    print(f"   CONFIDENCE: {item['confidence']}")
-    print(f"   PRIORITY SCORE: {item['priority']}")
-    print(f"   WHY NOW: {item['explanation']}")
-    print(f"   POSSIBLE ANGLE: {editorial_angle(topic)}")
+    print()
+    print(f"   {item['label']} — {item['confidence']} CONFIDENCE")
+    print(f"   PRIORITY: {item['priority']}")
+    print()
+    print("   WHY IT'S HERE:")
+    print(f"   {item['explanation']}")
     print(
-        f"   SIGNAL MIX: News {item['news_count']} | "
+        f"   Signals: News {item['news_count']} | "
         f"YouTube {item['youtube_count']} | "
         f"Google {item['google_count']}"
     )
-
+    print()
+    print(f"   MOVE: {move}")
+    print(f"   NEXT STEP: {next_step_for_move(move)}")
 
 print()
 print("=" * 72)
