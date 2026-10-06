@@ -1025,30 +1025,29 @@ print("=" * 72)
 
 opportunity_found = False
 
-for cluster in clusters[:10]:
-    news_count = len(cluster.get("news_sources", []))
-    youtube_count = len(cluster.get("youtube_creators", []))
-    google_count = len(cluster.get("google_matches", []))
+for topic in final_topics[:10]:
+    news_count = len({item["source"] for item in topic["news"]})
+    youtube_count = len({item["source"] for item in topic["youtube"]})
+    google_count = len(topic["google"])
 
-    opportunity = classify_opportunity(
+    label, explanation = classify_opportunity(
         news_count,
         youtube_count,
         google_count
     )
 
-    if opportunity:
-        opportunity_found = True
-        label, explanation = opportunity
+    opportunity_found = True
 
-        print()
-        print(f"• {cluster['title']}")
-        print(f"  OPPORTUNITY: {label}")
-        print(f"  WHY: {explanation}")
-        print(
-            f"  SIGNAL MIX: News {news_count} | "
-            f"YouTube {youtube_count} | Google {google_count}"
-        )
+    print()
+    print(f"• {topic['title']}")
+    print(f"  OPPORTUNITY: {label}")
+    print(f"  WHY: {explanation}")
+    print(
+        f"  SIGNAL MIX: News {news_count} | "
+        f"YouTube {youtube_count} | "
+        f"Google {google_count}"
+    )
 
 if not opportunity_found:
     print()
-    print("No strong editorial opportunities detected in this run.")
+    print("No editorial opportunities detected in this run.")
