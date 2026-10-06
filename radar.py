@@ -104,19 +104,72 @@ def important_words(text):
 
 def trend_matches_story(trend_title, story_title):
     """
-    Check whether a Google trend appears to relate
-    to an entertainment headline.
+    Decide whether a Google trend genuinely matches
+    an entertainment headline.
+
+    We deliberately use strict rules to avoid false
+    matches caused by generic words or numbers.
     """
 
-    trend_words = set(important_words(trend_title))
-    story_words = set(important_words(story_title))
+    trend_words = important_words(trend_title)
+    story_words = important_words(story_title)
+
+    # Ignore numbers completely when matching.
+    trend_words = [
+        word for word in trend_words
+        if not word.isdigit()
+    ]
+
+    story_words = [
+        word for word in story_words
+        if not word.isdigit()
+    ]
 
     if not trend_words or not story_words:
         return False
 
-    shared = trend_words.intersection(story_words)
+    trend_set = set(trend_words)
+    story_set = set(story_words)
 
-    return len(shared) >= 1
+    shared = trend_set.intersection(story_set)
+
+    # -----------------------------------
+    # RULE 1
+    # Multi-word Google trends need at
+    # least TWO matching meaningful words.
+    #
+    # Example:
+    # "Andrew Garfield"
+    # matches a headline containing
+    # "Andrew Garfield".
+    # -----------------------------------
+
+    if len(trend_set) >= 2:
+        return len(shared) >= 2
+
+    # -----------------------------------
+    # RULE 2
+    # A one-word Google trend must be a
+    # reasonably distinctive word.
+    #
+    # This allows things such as:
+    # "Beyonce"
+    # "Wicked"
+    # "Superman"
+    #
+    # but avoids tiny/generic matches.
+    # -----------------------------------
+
+    if len(trend_set) == 1:
+
+        word = next(iter(trend_set))
+
+        if len(word) < 6:
+            return False
+
+        return word in story_set
+
+    return False
 
 
 print()
